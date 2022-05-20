@@ -3,14 +3,192 @@ import Head from "next/head";
 import { providers, utils, Contract, BigNumber } from "ethers";
 import Web3Modal from "web3modal";
 import styles from "../styles/Home.module.css";
+import {
+  NFT_CONTRACT_ADDRESS,
+  NFT_CONTRACT_ABI,
+  TOKEN_CONTRACT_ADDRESS,
+  TOKEN_CONTRACT_ABI,
+} from "../constants";
 
 export default function Home() {
   // Set state for wallet
   const [walletConnected, setWalletConnected] = useState(false);
   // loading is set to true when we are waiting for a transaction to get mined
   const [loading, setLoading] = useState(false);
+  // Create a BigNumber `0`
+  const zero = BigNumber.from(0);
+  // tokensToBeClaimed keeps track of the number of tokens that can be claimed
+  // based on the Crypto Dev NFT's held by the user for which they havent claimed the tokens
+  const [tokensToBeClaimed, setTokensToBeClaimed] = useState(zero);
+  // balanceOfCryptoDevTokens keeps track of number of Crypto Dev tokens owned by an address
+  const [balanceOfCryptoDevTokens, setBalanceOfCryptoDevTokens] =
+    useState(zero);
+  // amount of the tokens that the user wants to mint
+  const [tokenAmount, setTokenAmount] = useState(zero);
+  // tokensMinted is the total amount of tokens that have been minted till now out of max total supply.(10000)
+  const [tokensMinted, setTokensMinted] = useState(zero);
   // Create a reference to the Web3 Modal (used for connecting to Metamask) which persists as long as the page is open
   const Web3ModalRef = useRef();
+
+  /**
+   * getTokensToBeClaimed: checks the balance of tokens that can be claimed by the user
+   */
+  const getTokensToBeClaimed = async () => {
+    try {
+      // Get provider from web3Modal. No Signer (read-only)
+      const provider = await getProviderOrSigner();
+      // Create an instance of NFT Contract
+      const nftContract = new Contract(
+        TOKEN_CONTRACT_ADDRESS,
+        TOKEN_CONTRACT_ABI,
+        provider
+      );
+      // Create instance of tokenContract
+      const tokenContract = new Contract(
+        TOKEN_CONTRACT_ADDRESS,
+        TOKEN_CONTRACT_ABI,
+        provider
+      );
+      // We need a signer now to extract the address from the connected Metamask account
+      const signer = await getProviderOrSigner(true);
+      // Get the address associated to the signer which is connected to Metamask
+      const address = await signer.getAddress();
+      // call the balanceOf from the NFT contract to get the number of NFT's held by the user
+      const balance = await nftContract.balanceOf(address);
+      // balance is a BigNumber and we need to compare it with the const `zero` we set earlier
+      if (balance === zero) {
+        setTokensToBeClaimed(zero);
+      } else {
+        // amount keeps track of the number of unclaimed tokens
+        var amount = 0;
+        // For all the NFT's, check if the tokens have already been claimed
+        // Only increase the amount if the tokens have not been claimed
+        // for a an NFT(for a given tokenId)
+        for (var i = 0; i < balance; i++) {
+          const tokenId = await nftContract.tokenOfOwnerByIndex(address, i);
+          const claimed = await tokenContract.tokensIdsClaimed(tokenId);
+          if (!claimed) {
+            amount++;
+          }
+        }
+        // tokensToBeClaimed has been initialized to a Big Number, thus we would convert amount
+        // to a big number and then set its value
+        setTokensToBeClaimed(BigNumber.from(amount));
+      }
+    } catch (error) {
+      console.error(errror);
+      setTokensToBeClaimed(zero);
+    }
+  };
+
+  /**
+   * getBalanceOfCryptoDevTokens: checks the balance of Crypto Dev Tokens held by an address
+   */
+  const getBalanceOfCryptoDevTokens = async () => {
+    try {
+      // get provider from web3Modal (read-only)
+      const provider = await getProviderOrSigner();
+      // create instance of token contract
+      const tokenContract = new Contract(
+        TOKEN_CONTRACT_ADDRESS,
+        TOKEN_CONTRACT_ABI,
+        provider
+      );
+      // We will get the signer now to extract the address of the currently connected Metamask
+      const signer = await getProviderOrSigner(true);
+      // Get the address associated to the signer which is connected to Metamask
+      const address = await signer.getAddress();
+      // call the balanceOf from the token contract to get the number of tokens held by the user
+      const balance = await tokenContract.balanceOf(address);
+      // balance is already a big number, so we dont need to convert it before setting it
+      setBalanceOfCryptoDevTokens(balance);
+    } catch (error) {
+      console.error(error);
+      setBalanceOfCryptoDevTokens(zero);
+    }
+  };
+
+  /**
+   * mintCryptoDevToken: mints `amount` number of tokens to a give address
+   */
+  const mintCryptoDevToken = async (amount) => {
+    try {
+      // We need a Signer here (write to blockchain)
+      // Create an instance of tokenContract
+      const signer = await getProviderOrSigner(true);
+      // create an instance of tokenContract
+      const tokenContract = new Contract(
+        TOKEN_CONTRACT_ADDRESS,
+        TOKEN_CONTRACT_ABI,
+        signer
+      );
+      // Each token is of `0.001 ether`. The value we need to send is `0.001 * amount`
+      const value = 0.001 * amount;
+      const txn = await tokenContract.mint(amount, {
+        // value signifies the cost of one crypto dev token which is "0.001" eth.
+        // We are parsing `0.001` string to ether using the utils library from ethers.js
+        value: utils.parseEther(value.toString()),
+      });
+      setLoading(true);
+      // wait for transaction to get mined
+      await txn.wait();
+      setLoading(false);
+      window.alert("Successfully minted Crypto Dev Tokens");
+      await getBalanceOfCryptoDevTokens();
+      await getTotalTokensMinted();
+      await getTokensToBeClaimed();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  /**
+   * claimCryptoDevTokens: Helps the user claim Crypto Dev Tokens
+   */
+  const claimCryptoDevTokens = async () => {
+    try {
+      // Signer needed for writing transaction
+      const signer = await getProviderOrSigner();
+      // Create an instance of tokenContract
+      const tokenContract = new Contract(
+        TOKEN_CONTRACT_ADDRESS,
+        TOKEN_CONTRACT_ABI,
+        signer
+      );
+      const txn = await tokenContract.claim();
+      setLoading(true);
+      // wait for txn to get mined
+      await txn.wait();
+      setLoading(false);
+      window.alert("Successfully claimed Crypto Dev Tokens");
+      await getBalanceOfCryptoDevTokens();
+      await getTotalTokensMinted();
+      await getTokensToBeClaimed();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  /**
+   * getTotalTokensMinted: Retrieves how many tokens have been minted till now out of the total supply
+   */
+  const getTotalTokensMinted = async () => {
+    try {
+      // Get provider from web3Modal. No Signer (read-only)
+      const provider = await getProviderOrSigner();
+      // Create instance of token contract
+      const tokenContract = new Contract(
+        TOKEN_CONTRACT_ADDRESS,
+        TOKEN_CONTRACT_ABI,
+        provider
+      );
+      // Get all tokens that have been minted
+      const _tokensMinted = await tokenContract.totalSupply();
+      setTokensMinted(_tokensMinted);
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   /**
    * Returns a Provider or Signer object representing the Ethereum RPC with or without the
@@ -67,11 +245,60 @@ export default function Home() {
         disableInjectedProvider: false,
       });
       connectWallet();
-      //   getTotalTokensMinted();
-      //   getBalanceOfCryptoDevTokens();
-      //   getTokensToBeClaimed();
+      getTotalTokensMinted();
+      getBalanceOfCryptoDevTokens();
+      getTokensToBeClaimed();
     }
   }, [walletConnected]);
+
+  /**
+   * renderButton: returns a button based on the state of the dapp
+   */
+  const renderButton = () => {
+    // If we are waiting for something, return a loading button
+    if (loading) {
+      return (
+        <div>
+          <button className={styles.button}>Loading...</button>
+        </div>
+      );
+    }
+    // If tokens to be claimed are greater than 0, Return a claim button
+    if (tokensToBeClaimed > 0) {
+      return (
+        <div>
+          <div className={styles.description}>
+            {tokensToBeClaimed * 10} Tokens can be claimed!
+          </div>
+          <button className={styles.button} onClick={claimCryptoDevTokens}>
+            Claim Tokens
+          </button>
+        </div>
+      );
+    }
+    // If user doesn't have any tokens to claim, show the mint button
+    return (
+      <div style={{ display: "flex-col" }}>
+        <div>
+          <input
+            type="number"
+            placeholder="Amount of Tokens"
+            // convert e.target.value to a BigNumber
+            onChange={(e) => setTokenAmount(BigNumber.from(e.target.value))}
+            className={styles.input}
+          />
+        </div>
+
+        <button
+          className={styles.button}
+          disabled={!(tokenAmount > 0)}
+          onClick={() => mintCryptoDevToken(tokenAmount)}
+        >
+          Mint Tokens
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -86,9 +313,28 @@ export default function Home() {
           <div className={styles.description}>
             You can claim or mint Crypto Dev (CD) tokens here
           </div>
-          <button onClick={connectWallet} className={styles.button}>
-            Connect your Wallet
-          </button>
+          {walletConnected ? (
+            <div>
+              <div className={styles.description}>
+                {/* Format Ether helps us in converting a BigNumber to string */}
+                You have minted {utils.formatEther(balanceOfCryptoDevTokens)}{" "}
+                Crypto Dev Tokens
+              </div>
+              <div className={styles.description}>
+                {/* Format Ether helps us in converting a BigNumber to string */}
+                Overall {utils.formatEther(tokensMinted)}/10000 have been
+                minted!!!
+              </div>
+              {renderButton()}
+            </div>
+          ) : (
+            <button onClick={connectWallet} className={styles.button}>
+              Connect your wallet
+            </button>
+          )}
+        </div>
+        <div>
+          <img className={styles.image} src="./0.svg" />
         </div>
       </div>
 
